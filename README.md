@@ -1,2 +1,2 @@
 # nf
-Nextflow scripts
+Some nextflow scripts.
