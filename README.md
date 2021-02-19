@@ -1,0 +1,2 @@
+# nf
+Nextflow scripts
