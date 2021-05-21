@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND noninteractive
 RUN apt-get update -y \
 	&& DEBIAN_FRONTEND=noninteractive \
 	&& apt-get install -y \
+    seqtk \
 	build-essential \
 	samtools \
 	git \
