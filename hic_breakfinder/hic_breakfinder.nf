@@ -86,3 +86,7 @@ process hic_breakfinder {
     --exp-file-intra intra_expect_100kb.hg38.txt --name ${id}
     """
 }
+
+// NOTE:  I couldn't get the s3 expect files to automatically resolve like I thought 
+// it should.  To get the run done I just manually put in aws cp to copy the expect files
+// but I plan to go back and figure out how to do it the nf way. 
