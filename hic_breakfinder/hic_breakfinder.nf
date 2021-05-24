@@ -1,28 +1,24 @@
 #!/usr/bin/env nextflow
 
-params.mcoolDir = false
+params.bamDir = false
 params.outDir = false
-params.resolutions = false
 params.help   = false
-
-#!/usr/bin/env nextflow
-
-params.mcoolDir = false
-params.outDir = false
-params.resolutions = false
-params.help   = false
+params.build="hg38"
 
 def helpMessage() {
     log.info"""
-    Usage:
+    Run hic_breakfinder on a directory of alignmnt bam files. 
 
-    The typical command for running the pipeline is as follows:
+    Run command like:
 
-        hic_breakfinder.nf --bamDir ~/mybamfiledir/
+        hic_breakfinder.nf --bamDir ~/mybamfiledir/ --outDir ~/outdir/
 
     Mandatory arguments:
         --bamDir [path]           Name of the a directory with bam files. 
         --outDir [path]           Directory where output files should go.
+    
+    Optional argument:
+        --build                   hg19 or hg38 (hg38 default)
     
     """.stripIndent()
 }
@@ -36,9 +32,34 @@ if (!params.bamDir) {
         exit 1, "--bamDir is a required argument. Use --help to get the full usage." 
 }
 
+if (!params.outDir) {
+        exit 1, "--outDir is a required argument. Use --help to get the full usage." 
+}
+
+if (params.build == "hg19"){
+    interExpect = "s3://dtgb.io/james/hic_breakfinder/inter_expect_1Mb.hg19.txt"
+    intraExpect = "s3://dtgb.io/james/hic_breakfinder/intra_expect_100kb.hg19.txt"
+}else{
+    interExpect = "s3://dtgb.io/james/hic_breakfinder/inter_expect_1Mb.hg38.txt"
+    intraExpect = "s3://dtgb.io/james/hic_breakfinder/intra_expect_100kb.hg38.txt"
+}
+
+// Build a list of tuples for each job...
+dir = new File(params.bamDir)
+fileList=[]
+dir.eachFileMatch(~/.*bam/){f-> 
+    id = f.name 
+    fileList.add([id,f.path,interExpect,intraExpect])
+}
+
+println("Running on the following tuples:")
+fileList.each{
+    println(it)
+}
+
 Channel
-    .fromPath("${params.bamDir}/*.bam")
-    .set{hicbreakfinder_ch}
+.fromList(fileList)
+.set{hicbreakfinder_ch}
 
 process hic_breakfinder {
     cpus 8
@@ -49,7 +70,7 @@ process hic_breakfinder {
 	mode: 'copy'
     
     input:
-    path(bam) from hicbreakfinder_ch
+    tuple val(id),path(bam),path(inter),path(intra) from hicbreakfinder_ch
     
     output:
     tuple id,path("*.txt") into hicbreakfinder_out_ch
@@ -57,8 +78,11 @@ process hic_breakfinder {
     script:
     id = bam.name.toString().take(bam.name.toString().lastIndexOf('.'))
     """
+    aws s3 cp ${interExpect} . 
+    aws s3 cp ${intraExpect} . 
+    
     /usr/local/bin/hic_breakfinder --bam-file ${bam} \
-    --exp-file-inter /src/hic_breakfinder/resources/inter_expect_1Mb.hg38.txt \
-    --exp-file-intra /src/hic_breakfinder/resources/intra_expect_100kb.hg38.txt --name ${id}    
+    --exp-file-inter inter_expect_1Mb.hg38.txt \
+    --exp-file-intra intra_expect_100kb.hg38.txt --name ${id}
     """
 }
