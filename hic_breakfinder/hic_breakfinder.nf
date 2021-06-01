@@ -57,6 +57,9 @@ fileList.each{
     println(it)
 }
 
+channel with 1M and 100k files as list 
+first() will recycle for every item in bam file channel...
+
 Channel
 .fromList(fileList)
 .set{hicbreakfinder_ch}
