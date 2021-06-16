@@ -5,6 +5,30 @@ params.outDir = false
 params.help   = false
 params.build="hg38"
 
+parseParams()
+
+Channel.fromPath('/mnt/ebs/james/dan/hint/nf/testdata/**.mcool').set{samples_ch}
+
+process foo{
+    input:
+    file x from samples_ch
+    
+    output:
+    stdout out_ch
+    
+    script:
+    """
+    echo $x
+    """
+}
+out_ch.view()
+
+
+
+
+/**
+*   Parse options and give help
+*/ 
 def parseParams(){
 helpmsg=
 """
@@ -26,20 +50,3 @@ helpmsg=
     if (params.help){log.info helpmsg; exit 0}
     //if (!params.coolDir || !params.outDir || !params.pairDir) {log.info helpmsg; exit 1}    
 }
-parseParams()
-
-Channel.fromPath('/mnt/ebs/james/dan/hint/nf/testdata/**.mcool').set{samples_ch}
-
-process foo{
-    input:
-    file x from samples_ch
-    
-    output:
-    stdout out_ch
-    
-    script:
-    """
-    echo $x
-    """
-}
-out_ch.view()
