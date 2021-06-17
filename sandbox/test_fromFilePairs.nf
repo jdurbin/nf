@@ -4,6 +4,8 @@ parseParams()
 
 // It's possible to have any number of files in the "pairs" list.  Default is 2, but with size: can set 
 // any size, and with -1 can have unlimited. 
+// NOTE: fromFilePairs returns the results in lexicographical order!  
+// This kind of sucks... I'd like the pairs returned in the order requested somehow...
 Channel.fromFilePairs("${params.inDir}/**.{mcool,pairs.sorted.txt.gz,cool}",size: 3).
 set{samples_ch}
 
@@ -16,6 +18,12 @@ process foo{
     stdout out_ch
     
     script:
+    println("X: ${x}")
+    mcool = x[0]
+    pairs = x[1]
+    cool =  x[2]
+    println("mcool: ${mcool}\t pairs:${pairs}\tcool:${cool}")
+    
     """
     echo $x
     """
