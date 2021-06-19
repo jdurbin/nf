@@ -14,7 +14,7 @@ coolPattern = "${params.coolDir}/*.mcool"
 // Create channels from inputs
 pairs = Channel.fromPath(pairsPattern).map{f->id = getID(f); return(tuple(id,f))}
 cools = Channel.fromPath(coolPattern).map{f->id = getID(f); return(tuple(id,f))}
-joinchannel = pairs.join(cools) 
+joinchannel = pairs.join(cools) // joins channels based on id
 
 println("\nInput channel with: ")
 joinchannel.combine([file(params.supportfiles)]).view().set{hint_ch} // add a singleton
@@ -35,6 +35,7 @@ process hint {
     path "hintout_*" into hintout_ch
     
     script:
+    id = mcool.name.toString().take(mcool.name.toString().lastIndexOf('.'))
     
     """ 
     hint tl -m \
@@ -44,7 +45,7 @@ process hint {
     --refdir ${supportfiles}/ref/hg38 \
     --backdir ${supportfiles}/matrix/hg38 \
     -g hg38 \
-    -n ${sampleId} \
+    -n ${id} \
     -c 0.05 \
     --ppath /pairix/bin/pairix -p 12 \
     -e DpnII \
