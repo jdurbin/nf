@@ -282,6 +282,7 @@ process pairtools_dedup {
 
     // Giving same file as output saves unmapped: 
    	// --output-unmapped ${id}_dedup.pairsam.gz 
+    // --output-unmapped ${id}_unmapped.pairsam.gz \
     // 
 
     script:
@@ -290,7 +291,7 @@ process pairtools_dedup {
 	--mark-dups \
 	--output-stats ${id}_pairtools.stats  \
 	--output ${id}_dedup.pairsam.gz \
-    --output-unmapped ${id}_unmapped.pairsam.gz \
+    --output-unmapped ${id}_dedup.pairsam.gz 
 	${sam}
     """
 }
