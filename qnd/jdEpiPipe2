@@ -1,0 +1,423 @@
+#!/usr/bin/env nextflow
+
+params.outDir = false
+
+params.biosample = false
+params.genewizMap = false
+params.fastqDir = false
+
+params.libraryID = false
+
+params.genome = 'hg38'
+
+params.resolutions = false
+params.ABresolutions = false
+
+params.HiChIP = false
+
+params.help = false
+
+params.mapQ = 40
+params.capture = false
+
+def helpMessage() {
+    log.info"""
+    
+    Temporary hack.  
+    
+    Usage:
+    
+    The typical command for running the pipeline is as follows:
+
+        epiPipe --fastqDir ~/ebs/ref_push/prodEpi/myExpName/fastqs/ --outDir ~/ebs/ref_push/prodEpi/myExpName
+
+    Mandatory arguments:
+        --outDir [pathOfDir]         Path of where to publish the data, can be local or an S3 accessible bucket
+
+    Input (minimum one of these, can be mixed):
+        --fastqDir [str]             Path to a directoy of fastq files (WARNING: Currently requires files are gz)
+
+    Alignment:
+		--genomeDir					 Name of directory where genome will be found.  It's assume xxx.fa is the genome.
+        --mapQ [int]                 Quqlity score to filter reads. Integer between 0 and 60. Default: 40.
+    
+    Sub-Steps:
+        --capture                    Will not permoform AB, TAD and loop calls
+    """.stripIndent()
+}
+
+if (params.help){
+    helpMessage()
+    exit 0
+}
+
+if ( !(params.outDir) ){
+    exit 1, "--outDir is a required arguments. Use --help to get the full usage." 
+}
+
+
+Channel
+.fromFilePairs("${params.genomeDir}/*.{amb,sa,pac,ann,bwt,fa}", size: -1, checkIfExists: true)
+.ifEmpty { exit 1, "BWA index not found: ${params.genomeDir}" }
+.view()
+.set { bwa_index }	
+
+Channel
+.empty()
+.into { biosample_ch;fastqs_ch }
+
+if (params.fastqDir){   
+	params.fastqDir.eachFile{file->
+		
+	}
+	
+	Channel
+	.fromFilePairs("${params.fastqDir}/*_{R1,R2}*.fastq.gz",
+	chekIfExists: true,flat: true)
+	.set{fastqDir_ch}	
+	
+}catch (Exception e){
+	println("EXCEPTION: ${e}")
+}
+
+process bwa_mem {
+    tag "_${id}"
+    cpus 48
+    memory '48 GB'
+    container 'mblanche/bwa-samtools'
+    
+    input:
+	println("DEBUG")
+	
+    tuple id, file(R1s), file(R2s) from fastqs_ch
+	.map{bs,file ->
+	    pref = file.name.toString().take(file.name.toString().indexOf('_R'))
+	    return(tuple(pref,file))
+	}
+	.groupTuple()
+	.flatten()
+	.collate(3)
+    .mix(fastqDir_ch)
+	
+
+	//This is an hack to make sure all files are in staged area
+    tuple index, path(index_files) from bwa_index.first() 	
+	
+    output:
+    tuple id, path("*.bam"), path("*.tsv") into  pairtools_parse_ch
+    
+    script:
+	
+    """
+    bwa mem -5SP -t ${task.cpus} \
+    	${index} \
+    	<(zcat ${R1s}) \
+    	<(zcat ${R2s}) \
+	|samtools view -@ ${task.cpus} -Shb -o ${id}.bam - \
+	&& samtools view -H ${id}.bam | \
+	awk -v OFS='\t' '/^@SQ/ && !(\$2 ~ /:(chr|"")M/) {split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' | \
+	sort -V -k1,1 \
+	> chr_size.tsv
+    """
+}
+
+process pairtools_parse {
+    tag "_${id}"
+    cpus 14
+    memory '50 GB'
+    container 'mblanche/pairtools'
+
+    input:
+    tuple id, path(sam), path(chr_sizes) from pairtools_parse_ch
+
+    output:
+    tuple id, path("*.pairsam.gz") into pairsam_part_ch
+
+    script:
+    """
+    pairtools parse \
+	--min-mapq ${params.mapQ} \
+	--walks-policy 5unique \
+	--max-inter-align-gap 30 \
+	--nproc-in ${task.cpus} --nproc-out ${task.cpus} \
+	--chroms-path ${chr_sizes} \
+	--output ${id}.pairsam.gz \
+	${sam} 
+    """
+}
+
+process pairtools_merge_lane {
+    tag "_${id}"
+    cpus 14
+    memory '50 GB'
+    container 'mblanche/pairtools'
+    
+    input:
+    tuple id, path(sam) from pairsam_part_ch
+	.map {id, file ->
+            def key = id.tokenize('_').get(0)
+            return tuple(key, file)
+	}
+	.groupTuple()
+
+    output:
+    tuple id, path("*.pairsam.gz") into pairsam_ch
+
+    script:
+    if (sam.sort().size() >1) {
+	"""
+	pairtools merge -o ${id}.pairsam.gz --nproc ${task.cpus} ${sam}
+	"""
+    } else {
+	"""
+	ln -sf ${sam} ${id}_ML.pairsam.gz
+	"""
+    }
+    
+}
+
+process pairtools_sort {
+    tag "_${id}"
+    cpus 14
+    memory '100 GB'
+    container 'mblanche/pairtools'
+
+    input:
+    tuple id, path(sam) from pairsam_ch
+
+    output:
+    tuple id, path("*_sorted.pairsam.gz") into sorted_ps_ch
+    
+    script:
+    """
+    mkdir -p tmp 
+    pairtools sort --tmpdir ./tmp  \
+	--nproc ${task.cpus} \
+	--output ${id}_sorted.pairsam.gz \
+	$sam 
+    """
+}
+
+process pairtools_dedup {
+    tag "_${id}"
+    cpus 14
+    memory '40 GB'
+    container 'mblanche/pairtools'
+    
+    publishDir "${params.outDir}/pairtools_stat",
+    	mode: 'copy',
+    	saveAs: {filename -> filename.endsWith('.stats') ? filename : null}
+    
+    input:
+    tuple id, path(sam) from sorted_ps_ch
+
+    output:
+    tuple id, path("*_dedup.pairsam.gz") into dedup_ps_ch
+    tuple id, path("*_unmapped.pairsam.gz") into unmapped_ps_ch
+    tuple id, path("*_pairtools.stats") into ps_stats_ch
+
+    // Giving same file as output saves unmapped: 
+   	// --output-unmapped ${id}_dedup.pairsam.gz 
+    // 
+
+    script:
+    """
+    pairtools dedup --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
+	--mark-dups \
+	--output-stats ${id}_pairtools.stats  \
+	--output ${id}_dedup.pairsam.gz \
+    --output-unmapped ${id}_unmapped.pairsam.gz \
+	${sam}
+    """
+}
+
+process pairtools_stats_merge {
+    tag "_${id}"
+    cpus 1
+    memory '4 GB'
+    container 'mblanche/pt-stats'
+
+    publishDir "${params.outDir}",
+	mode: 'copy'
+    
+    input:
+    path(stats) from ps_stats_ch
+	.map{it[1]}
+	.collect()
+    
+    output:
+    path('pairtoolsStats.csv') into merged_stats_ch
+    
+    script:
+    """
+    pairtoolsStat.sh ${stats} > pairtoolsStats.csv
+    """
+}
+
+process pairtools_split_dedup {
+    tag "_${id}"
+    cpus 14
+    memory '40 GB'
+    container 'mblanche/pairtools'
+
+    input:
+    tuple id, path(sam) from dedup_ps_ch
+    
+    output:
+    tuple id, path("*.bam") into bam_parts_ch
+    tuple id, path("*.valid.pairs.gz") into pairs_parts_ch, pairs_parts_ch_test
+
+    script:
+    """
+    pairtools split --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
+	--output-sam ${id}_PT.bam  \
+	--output-pairs ${id}_PT.valid.pairs.gz  \
+	${sam}
+    """
+}
+
+process merge_bam {
+    tag "_${id}"
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/bwa-samtools'
+
+    input:
+    tuple id, path(bam_part) from bam_parts_ch
+	.map {id, file ->
+	    if ( id.contains("-rep") ){
+		def key = id.replaceFirst(/(.*)-rep.*/,'$1')
+		return tuple(key, file)
+	    } else {
+		return( tuple(id,file) )
+	    }
+	}
+	.groupTuple()
+
+    output:
+    tuple id, path("*.bam") into merged_bam_sort_ch
+
+    script:
+    bam_files = bam_part.sort()
+    if (bam_files.size() >1) {
+	"""
+	samtools merge -@ ${task.cpus} ${id}_MB.bam ${bam_part}
+	"""
+    } else {
+	"""
+	ln -s ${bam_part} ${id}_MB.bam
+	"""
+    }
+}
+
+process bam_sort {
+    tag "bam_sort_${id}"
+    cpus 48
+    memory '150 GB'
+    container 'mblanche/bwa-samtools'
+    
+    publishDir "${params.outDir}/bam",mode: 'copy',pattern: "${id}.bam"
+    publishDir "${params.outDir}/bam",mode: 'copy',pattern: "${id}.bam.bai"
+        
+    input:
+    tuple id, path(bam) from merged_bam_sort_ch
+    
+    output:
+    tuple id, path("${id}.bam"),path("${id}.bam.bai") into bam_bigwig_ch
+
+    script:
+    """
+    samtools sort -m 2G \
+	-@ ${task.cpus} \
+	-o ${id}.bam \
+	${bam} 
+
+    samtools index -@${task.cpus} ${id}.bam
+    """
+}
+
+process pairtools_split_unmapped {
+    tag "_${id}"
+    cpus 14
+    memory '40 GB'
+    container 'mblanche/pairtools'
+    
+    publishDir "${params.outDir}/unmapped",
+    	mode: 'copy'
+
+    input:
+    tuple id, path(sam) from unmapped_ps_ch
+    
+    output:
+    path "*_unmapped.bam" into unmapped_bam_ch
+    path "*_unmapped.valid.pairs.gz" into unmapped_pairs_ch
+
+    script:
+    """
+    pairtools split --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
+	--output-sam ${id}_unmapped.bam  \
+	--output-pairs ${id}_unmapped.valid.pairs.gz  \
+	${sam}
+    """
+}
+
+process merge_pairs {
+    tag "_${id}"
+    cpus 14
+    memory '40 GB'
+    container 'mblanche/pairtools'
+    
+    publishDir "${params.outDir}/validPairs",
+    	mode: 'copy'
+    
+    input:
+    tuple val(id), path(pairs) from pairs_parts_ch
+	.map {id, file ->
+	    if ( id.contains("-rep") ){
+		def key = id.replaceFirst(/(.*)-rep.*/,'$1')
+		return tuple(key, file)
+	    } else {
+		return( tuple(id,file) )
+	    }
+	}
+	.groupTuple()
+    
+    output:
+    tuple id, path("*.valid.pairs.gz"), path("*.px2") into pairs_chrSize_ch
+
+    script:
+    pair_files = pairs.sort()
+    if (pair_files.size() >1) {
+	"""
+	pairtools merge -o ${id}.valid.pairs.gz --nproc ${task.cpus}  ${pairs}
+	pairix ${id}.valid.pairs.gz
+	"""
+    } else {
+	"""
+	ln -s ${pairs} ${id}.valid.pairs.gz
+	pairix ${id}.valid.pairs.gz
+	"""
+    }
+}
+
+process chr_size {
+    tag "_${id}"
+    cpus 4
+    memory '24 GB'
+    container 'mblanche/pairtools'
+    
+    input:
+    tuple id, path(pairs), path(idx) from pairs_chrSize_ch
+    
+    output:
+    tuple id, path(pairs), path(idx), path("*.tsv") into pairs_ch_cooler, pairs_ch_juicer
+    
+    script:
+    """
+    pairix -H -f ${pairs} \
+	| awk -v OFS='\t' '/^#chromsize/  {print \$2,\$3}' \
+	| sort -V -k1,1 \
+	> chr_size.tsv
+    """
+}
+
