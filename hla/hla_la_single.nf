@@ -7,9 +7,42 @@
 // Parse command line options, set other parameters. 
 parseParams()
 
+/*************************
+*   Helper Functions
+**/
+def parseParams(){
+helpmsg=
+"""
+    HLA*LA Simple Pipeline
+    
+    Run command like:
+    
+        ~/nf/hla/hla_la_single.nf -profile local --bamFile input.bam --outDir hintout/
+
+    Required arguments:
+        --bamFile [path]        Name of the bam file. 
+        --outDir [path]         Directory where output files should go. 
+        --graphDir [path]       Graph directory (default: s3://dtgb.io/james/hla-la/graphs/)
+""".stripIndent()    
+    
+    if (params.help){log.info helpmsg; exit 0}
+    if (!params.bamFile || !params.outDir) {log.info helpmsg; exit 1} 
+    
+    // Default graph dir if one isn't given on the command line. 
+    // Note: It's kind of weird that this works here, as when does the command line 
+    // version override it?   Nonetheless, this does work. 
+    params.graphDir = 's3://dtgb.io/james/hla-la/graphs/'
+}
+
+// Extract the portion of the name up to the first dot to use as an ID
+def getID(f){
+    return(f.name.toString().take(f.name.toString().indexOf('.')))
+}
+
+
 // Pick up the bam and associated bai files...
 bamRoot = params.bamFile.replace(".bam","")
-Channel.fromFilePairs("${bamRoot}*.{bam,bai}"){ 
+Channel.fromFilePairs("${bamRoot}*.{bam,bai}",checkIfExists: true){ 
     file -> file.name.replaceAll(/.bam|.bai$/,'') }.view().set{bamin_ch}
 
 // Add in the pre-computed graph directory (default on s3)
@@ -43,42 +76,20 @@ process hla_la_single {
     sid = id.replaceAll("-","_") // HLA-LA doesn't like dashes in ID
     
     """
-    mkdir -p working
-    HLA-LA.pl --bam ${bamfile} --sampleID $sid --workingDir working --customGraphDir ${graphdir} \
-    --graph PRG_MHC_GRCh38_withIMGT --maxThreads 48 --picard_sam2fastq_bin '/picard.jar'
+	mkdir -p working
+	HLA-LA.pl --bam ${bamfile} --sampleID $sid --workingDir working --customGraphDir ${graphdir} \
+	--graph PRG_MHC_GRCh38_withIMGT --maxThreads 48 --picard_sam2fastq_bin '/picard.jar'
     """ 
 }
 out_ch.view()
 
-
-/*************************
-*   Helper Functions
-**/
-def parseParams(){
-helpmsg=
+/*
 """
-    HLA*LA Simple Pipeline
-    
-    Run command like:
-    
-        ~/nf/hla/hla_la_single.nf -profile local --bamFile input.bam --outDir hintout/
+mkdir -p working
+ls -l    
+echo 'this is some hard work' > working/output.txt
+""" 
+*/
 
-    Required arguments:
-        --bamFile [path]        Name of the bam file. 
-        --outDir [path]         Directory where output files should go. 
-        --graphDir [path]       Graph directory (default: s3://dtgb.io/james/hla-la/graphs/)
-""".stripIndent()    
-    
-    if (params.help){log.info helpmsg; exit 0}
-    if (!params.bamFile || !params.outDir) {log.info helpmsg; exit 1} 
-    
-    // Default graph dir if one isn't given on the command line. 
-    // Note: It's kind of weird that this works here, as when does the command line 
-    // version override it?   Nonetheless, this does work. 
-    params.graphDir = 's3://dtgb.io/james/hla-la/graphs/'
-}
-
-// Extract the portion of the name up to the first dot to use as an ID
-def getID(f){
-    return(f.name.toString().take(f.name.toString().indexOf('.')))
-}
+// HLA-LA.pl --bam ${bamfile} --sampleID $sid --workingDir working --customGraphDir ${graphdir} \
+// --graph PRG_MHC_GRCh38_withIMGT --maxThreads 48 --picard_sam2fastq_bin '/picard.jar'a

@@ -72,28 +72,15 @@ if (params.ABresolutions){
     ABresolutions = [32,64,128]
 }
 
-if (!params.genome =~ /hg38|hg19|c6_hs37d5|mm10|dm3/){
+if (!params.genome =~ /hg38|hg19|c6_hs37d5|mm10|hg002_hifiasm|callseqs|dm3/){
     exit 1, "Only hg38,hg19, mm10 and dm3 genomes are currently offered"
-} else {
-    if (params.genome == 'c6_hs37d5'){
-        Channel
-    	.fromPath("/mnt/ebs/james/ref/GRCh37/withdecoy/nextflow/${params.genome}", checkIfExists: true)
-    	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
-    	.set { bwa_index }
-        Channel
-    	.fromPath("/mnt/ebs/james/ref/GRCh37/withdecoy/nextflow/${params.genome}/${params.genome}.fa", checkIfExists: true)
-    	.ifEmpty { exit 1, "Genome not found: ${params.genome}" }
-    	.set { abcomp_genome_ch }
-    }else{        
-        Channel
-    	.fromPath("${HOME}/ebs/genome/nextflow/${params.genome}", checkIfExists: true)
-    	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
-    	.set { bwa_index }
-        Channel
-    	.fromPath("${HOME}/ebs/genome/nextflow/${params.genome}/${params.genome}.fa", checkIfExists: true)
-    	.ifEmpty { exit 1, "Genome not found: ${params.genome}" }
-    	.set { abcomp_genome_ch }
-    }
+} else {	
+    Channel
+	.fromFilePairs("/mnt/ebs/genome/nextflow/${params.genome}/*.{amb,sa,pac,ann,bwt,fa}", size: -1, checkIfExists: true)
+	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
+	.view()
+	.set { bwa_index }
+	    
 }
 
 if (params.biosample){
@@ -155,6 +142,8 @@ process bwa_mem {
     container 'mblanche/bwa-samtools'
     
     input:
+	println("DEBUG")
+	
     tuple id, file(R1s), file(R2s) from fastqs_ch
 	.map{bs,file ->
 	    pref = file.name.toString().take(file.name.toString().indexOf('_R'))
@@ -166,15 +155,17 @@ process bwa_mem {
         .mix(fastqDir_ch)
 	.mix(genewiz_ch)
 
-    path index from bwa_index.first()
+	//This is an hack to make sure all files are in staged area
+    tuple index, path(index_files) from bwa_index.first() 
     
     output:
     tuple id, path("*.bam"), path("*.tsv") into  pairtools_parse_ch
     
     script:
+	
     """
     bwa mem -5SP -t ${task.cpus} \
-    	${index}/${params.genome} \
+    	${index} \
     	<(zcat ${R1s}) \
     	<(zcat ${R2s}) \
 	|samtools view -@ ${task.cpus} -Shb -o ${id}.bam - \

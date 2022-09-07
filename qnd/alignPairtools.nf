@@ -8,7 +8,7 @@ params.fastqDir = false
 
 params.libraryID = false
 
-params.genome = 'hg38'
+params.genome = 'hifiasm'
 
 params.resolutions = false
 params.ABresolutions = false
@@ -84,18 +84,21 @@ if (params.ABresolutions){
     ABresolutions = [32,64,128]
 }
 
-if (!params.genome =~ /hg19|hg38|mm10|dm3/){
+if (!params.genome =~ /hg19|hg38|mm10|hifiasm|dm3/){
     exit 1, "Only hg38, mm10 and dm3 genomes are currently offered"
+}
+
+// Special case for one-off hifiasm alignment...
+if (params.genome == 'hifiasm'){
+    Channel
+	.fromFilePairs("/mnt/ebs/james/ref/hifiasm/mixed/*.{amb,sa,pac,ann,bwt,fa}", size: -1, checkIfExists: true)
+	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
+	.set { bwa_index }
 } else {
     Channel
 	.fromFilePairs("${HOME}/ebs/genome/nextflow/${params.genome}/*.{amb,sa,pac,ann,bwt,fa}", size: -1, checkIfExists: true)
 	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
 	.set { bwa_index }
-    Channel
-	.fromPath("${HOME}/ebs/genome/nextflow/${params.genome}/${params.genome}.fa", checkIfExists: true)
-	.ifEmpty { exit 1, "Genome not found: ${params.genome}" }
-	.set { abcomp_genome_ch }
-    
 }
 
 // KJD??
@@ -138,6 +141,7 @@ if (params.fastqDir){
     }
 }
 
+Channel.empty().set{genewiz_ch}
 
 process bwa_mem {
     tag "_${id}"

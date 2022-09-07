@@ -1,9 +1,5 @@
 #!/usr/bin/env nextflow
 
-/***************************************************
-*  HiNT translocation finding pipeline
-*/
-
 params.refName=false
 
 // Parse command line options, set other parameters. 
@@ -16,9 +12,9 @@ bamchannel.combine([file(params.referenceDir)]).view().set{dv_ch} // add a singl
 
 // Process
 process dv_simple_dir {
-    cpus 48
-    memory '48 GB'
-    container "google/deepvariant"
+    cpus 96
+    memory '200 GB'
+    container "google/deepvariant:1.3.0"
     
     publishDir "${params.outDir}",
 	mode: 'copy'
@@ -41,7 +37,7 @@ process dv_simple_dir {
 	--output_vcf=${sampleID}.vcf.gz \
 	--output_gvcf=${sampleID}.g.vcf.gz\
 	--intermediate_results_dir /intermediate_results_dir \
-	--num_shards=48    
+	--num_shards=96    
     """
 }
 
